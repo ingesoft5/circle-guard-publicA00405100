@@ -1,0 +1,58 @@
+# =====================================================================
+# TALLER 2 - Jenkins reproducible
+# Levanta el servidor de Jenkins ya configurado (plugins, credenciales y
+# los tres jobs Multibranch) sin ningun paso manual en la interfaz web.
+#
+# Orden de uso:
+#   1) bash scripts/setup-entorno.sh     (crea el cluster kind y el kubeconfig)
+#   2) docker compose -f docker-compose.jenkins.yml up -d --build
+#
+# El paso 1 debe ir primero porque este compose se conecta a la red que
+# crea kind para que Jenkins alcance el API server de Kubernetes.
+# =====================================================================
+services:
+  jenkins:
+    build:
+      context: ./jenkins
+      args:
+        # GID del grupo docker del host, para que el usuario jenkins pueda
+        # usar el socket montado. setup-entorno.sh escribe el valor real
+        # en el archivo .env
+        DOCKER_GID: ${DOCKER_GID:-999}
+    image: circleguard/jenkins-taller2:1.0
+    container_name: jenkins
+    restart: unless-stopped
+    environment:
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin}
+      GITHUB_USER: ${GITHUB_USER}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc/jenkins.yaml
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false -Dhudson.model.DirectoryBrowserSupport.CSP=
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Socket del host: permite construir imagenes y usar kind desde el pipeline
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
+    networks:
+      - kind
+      - circleguard
+
+volumes:
+  # Volumen con nombre: aqui viven la configuracion, el historial de builds
+  # y las credenciales. Es el volumen que se exporta para la entrega.
+  jenkins_home:
+    name: jenkins_home
+
+networks:
+  # Red creada por kind al levantar el cluster. Da acceso al API server.
+  kind:
+    external: true
+  # Red del docker-compose.dev.yml (Postgres, Kafka, Neo4j, Redis).
+  circleguard:
+    external: true
+    name: circle-guard-public_default

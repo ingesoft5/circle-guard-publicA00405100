@@ -46,3 +46,12 @@ web-build/
 *_data/
 pgdata/
 neo4jdata/
+.env
+.secretos/
+entrega-volumenes/
+.env
+.secretos/
+entrega-volumenes/
+.env
+.secretos/
+entrega-volumenes/

@@ -1,0 +1,90 @@
+# =====================================================================
+# TALLER 2 - Configuracion de Jenkins como codigo (JCasC)
+# Este archivo reconstruye por completo la instancia de Jenkins:
+# usuario, credenciales y los tres jobs Multibranch (dev, stage, master).
+# No hay que configurar nada a mano en la interfaz web.
+# =====================================================================
+jenkins:
+  systemMessage: "CircleGuard - Taller 2: pruebas y lanzamiento. Entorno generado con Configuration as Code."
+  numExecutors: 2
+  mode: NORMAL
+  scmCheckoutRetryCount: 2
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID:-admin}"
+          password: "${JENKINS_ADMIN_PASSWORD:-admin}"
+
+  authorizationStrategy:
+    loggedInAuthorizationStrategy:
+      allowAnonymousRead: true
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          # Token de GitHub: lo usa el escaneo Multibranch y el push del tag
+          # de release en el pipeline de master.
+          - usernamePassword:
+              scope: GLOBAL
+              id: "github-creds"
+              description: "GitHub - lectura del repo y push de tags de release"
+              username: "${GITHUB_USER}"
+              password: "${GITHUB_TOKEN}"
+          # La credencial de tipo archivo "kubeconfig" se registra desde
+          # init.groovy.d/10-kubeconfig-credential.groovy, que lee el archivo
+          # generado por scripts/setup-entorno.sh.
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"
+  globalLibraries:
+    libraries: []
+
+jobs:
+  - script: |
+      def repo = 'https://github.com/ingesoft5/circle-guard-publicA00405100.git'
+
+      // Un job Multibranch por ambiente. Cada uno vigila UNA rama y usa
+      // su propio Jenkinsfile, tal como pide el taller (puntos 2, 4 y 5).
+      def ambientes = [
+          [nombre: 'circleguard-dev',    rama: 'develop', archivo: 'Jenkinsfile.dev',
+           desc: 'Punto 2 - build, pruebas unitarias e integracion, despliegue en el namespace dev'],
+          [nombre: 'circleguard-stage',  rama: 'stage',   archivo: 'Jenkinsfile.stage',
+           desc: 'Punto 4 - despliegue en stage y pruebas E2E y de rendimiento sobre Kubernetes'],
+          [nombre: 'circleguard-master', rama: 'master',  archivo: 'Jenkinsfile.master',
+           desc: 'Punto 5 - aprobacion manual, despliegue a produccion y Release Notes automaticas']
+      ]
+
+      ambientes.each { amb ->
+          multibranchPipelineJob(amb.nombre) {
+              description(amb.desc)
+              branchSources {
+                  git {
+                      id(amb.nombre)
+                      remote(repo)
+                      credentialsId('github-creds')
+                      includes(amb.rama)
+                  }
+              }
+              factory {
+                  workflowBranchProjectFactory {
+                      scriptPath(amb.archivo)
+                  }
+              }
+              // Escaneo cada minuto: si el profesor hace un cambio y lo sube,
+              // el pipeline arranca solo sin tocar nada en la interfaz.
+              triggers {
+                  periodicFolderTrigger {
+                      interval('1m')
+                  }
+              }
+              orphanedItemStrategy {
+                  discardOldItems {
+                      numToKeep(10)
+                  }
+              }
+          }
+      }
