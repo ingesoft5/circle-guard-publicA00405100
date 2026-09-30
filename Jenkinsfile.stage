@@ -40,7 +40,7 @@ pipeline {
                       :services:circleguard-notification-service:test --tests "*TemplateServiceContentTest" \
                       :services:circleguard-dashboard-service:test --tests "*KAnonymityFilterTest"
                 '''
-                sh './gradlew --no-daemon :services:circleguard-form-service:test --tests "*IT"'
+                sh './gradlew --continue --no-daemon :services:circleguard-form-service:test --tests "*IT" :services:circleguard-auth-service:test --tests "*IT" :services:circleguard-dashboard-service:test --tests "*IT" :services:circleguard-notification-service:test --tests "*IT" :services:circleguard-promotion-service:test --tests "*IT"'
             }
             post {
                 always {
