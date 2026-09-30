@@ -143,3 +143,14 @@ Los archivos `.env` y `.secretos/` **no se versionan**. Añadir al
 .secretos/
 entrega-volumenes/
 ```
+
+## 7. Rearmar el volumen de Jenkins
+
+El archivo `jenkins_home.tgz` viene partido en dos, porque GitHub no acepta
+archivos de más de 100 MB. Antes de restaurarlo:
+
+```bash
+cat entrega-volumenes/jenkins_home.tgz.part_* > entrega-volumenes/jenkins_home.tgz
+rm entrega-volumenes/jenkins_home.tgz.part_*
+bash scripts/importar-volumenes.sh
+```
