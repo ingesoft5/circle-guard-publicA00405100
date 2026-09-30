@@ -1,0 +1,4 @@
+# Solo se envian a Docker los .jar ya compilados por Jenkins (etapa Build).
+# Sin esto se enviaba .gradle/ (cientos de MB) en cada imagen.
+*
+!services/*/build/libs/*-SNAPSHOT.jar
