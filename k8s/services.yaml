@@ -22,7 +22,7 @@ spec:
           ports: [{ containerPort: 8083 }]
           env:
             - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/circleguard
+              value: jdbc:postgresql://postgres:5432/circleguard_identity
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
             - name: SPRING_DATASOURCE_PASSWORD
@@ -64,17 +64,13 @@ spec:
           ports: [{ containerPort: 8180 }]
           env:
             - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/circleguard
+              value: jdbc:postgresql://postgres:5432/circleguard_auth
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
             - name: SPRING_DATASOURCE_PASSWORD
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_PASSWORD } }
-            - name: IDENTITY_API_URL
+            - name: CIRCLEGUARD_IDENTITYSERVICE_URL
               value: http://identity-service:8083
-            - name: QR_SECRET
-              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: QR_SECRET } }
-            - name: JWT_SECRET
-              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: JWT_SECRET } }
           resources:
             requests: { memory: "384Mi", cpu: "150m" }
             limits: { memory: "768Mi", cpu: "600m" }
@@ -112,7 +108,7 @@ spec:
           ports: [{ containerPort: 8086 }]
           env:
             - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/circleguard
+              value: jdbc:postgresql://postgres:5432/circleguard_form
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
             - name: SPRING_DATASOURCE_PASSWORD
@@ -156,7 +152,7 @@ spec:
           ports: [{ containerPort: 8088 }]
           env:
             - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/circleguard
+              value: jdbc:postgresql://postgres:5432/circleguard_promotion
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
             - name: SPRING_DATASOURCE_PASSWORD
@@ -246,7 +242,7 @@ spec:
           ports: [{ containerPort: 8084 }]
           env:
             - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://postgres:5432/circleguard
+              value: jdbc:postgresql://postgres:5432/circleguard_dashboard
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
             - name: SPRING_DATASOURCE_PASSWORD
