@@ -154,3 +154,20 @@ cat entrega-volumenes/jenkins_home.tgz.part_* > entrega-volumenes/jenkins_home.t
 rm entrega-volumenes/jenkins_home.tgz.part_*
 bash scripts/importar-volumenes.sh
 ```
+
+## 8. Distribución de imágenes: por qué no se usa un registro
+
+El pipeline no publica las imágenes en un registro privado (Nexus, Harbor,
+ECR). Construye cada imagen con el demonio de Docker del host y la inyecta
+en los nodos del cluster con `kind load docker-image`.
+
+La razón es que Jenkins y el cluster kind comparten el mismo demonio de
+Docker, así que un registro intermedio solo añadiría una copia de red y un
+punto más de fallo. El resultado es equivalente: el `imagePullPolicy` de
+los manifiestos es `IfNotPresent`, de modo que Kubernetes usa la imagen ya
+cargada en el nodo y nunca intenta descargarla.
+
+En un entorno real con varios nodos o con el cluster en otra máquina, este
+paso se sustituiría por `docker push` a un registro y el `imagePullPolicy`
+pasaría a `Always`. El cambio afecta solo a dos líneas del Jenkinsfile y
+una del manifiesto, sin tocar la aplicación.
