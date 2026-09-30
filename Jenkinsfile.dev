@@ -1,0 +1,28 @@
+pipeline {
+  agent any
+  options { timestamps() }
+  environment { GRADLE_USER_HOME = "${WORKSPACE}/.gradle" }
+  stages {
+    stage('Build') {
+      steps { sh 'chmod +x gradlew && ./gradlew assemble -x test --no-daemon' }
+    }
+    stage('Pruebas') {
+      steps {
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+          sh './gradlew test --continue --no-daemon'
+        }
+      }
+      post { always { junit allowEmptyResults: true, testResults: '**/build/test-results/test/*.xml' } }
+    }
+    stage('Imagenes Docker') {
+      steps {
+        script {
+          ['auth','identity','form','promotion','notification','dashboard'].each { s ->
+            sh "docker build -f services/circleguard-${s}-service/Dockerfile -t circleguard/${s}:${env.BUILD_NUMBER} ."
+          }
+        }
+        sh 'docker images | grep circleguard'
+      }
+    }
+  }
+}
