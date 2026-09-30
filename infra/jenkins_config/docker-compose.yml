@@ -37,7 +37,7 @@ services:
     restart: unless-stopped
     environment:
       SMEE_URL: ${SMEE_CHANNEL_URL}
-      SMEE_TARGET: http://jenkins:8080/github-webhook/
+      SMEE_TARGET: "http://jenkins:8080/github-webhook/?via=smee"
     networks:
       - cicd_network
     depends_on:
