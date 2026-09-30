@@ -1,3 +1,5 @@
+https://docs.google.com/document/d/1TelMH9LdMFXI1HKVPhPNx2efBLq15hcsbcI_Sd7PeEE/edit?usp=sharing
+
 # 🛡️ CircleGuard Monorepo
 
 **Absolute Privacy. High-Speed Containment. Secure Campus.**
