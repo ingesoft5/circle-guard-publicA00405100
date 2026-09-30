@@ -10,6 +10,10 @@ services:
     build: .
     container_name: jenkins
     restart: unless-stopped
+    # El smoke test del Jenkinsfile consulta la app publicada en el host
+    # (host.docker.internal); en Linux ese nombre debe declararse explícitamente.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - cicd_network
     ports:
@@ -19,9 +23,9 @@ services:
       - jenkins_home:/var/jenkins_home
       # Socket del daemon Docker del host: Jenkins construye/publica/despliega
       - /var/run/docker.sock:/var/run/docker.sock
-    # En Docker Desktop el socket montado pertenece a root:root (660).
-    # En lugar de ejecutar Jenkins como root, se añade el grupo del socket
-    # (GID 0) como grupo suplementario del usuario jenkins.
+    # En lugar de ejecutar Jenkins como root, se añade el grupo dueño del
+    # socket como grupo suplementario del usuario jenkins. Su GID se obtiene
+    # con: stat -c %g /var/run/docker.sock (0 si es root:root).
     group_add:
       - "${DOCKER_SOCK_GID:-0}"
     healthcheck:

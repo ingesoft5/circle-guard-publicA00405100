@@ -5,9 +5,6 @@ Ingeniería de Software V · Universidad Icesi · 202620 · Luis G. (A00405100)
 📄 **Documento de resultados y evidencias:**
 https://docs.google.com/document/d/1oL_0hv4_brdzVSmcq_BEUquJKhjXHfaO9_-UpcfVkBg/edit?usp=sharing
 
-> El proyecto anterior (CircleGuard) está preservado en la rama `circleguard-backup`
-> y en el tag `circleguard-backup-v1`.
-
 ## Estructura
 
 ```
