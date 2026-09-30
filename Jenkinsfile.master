@@ -1,0 +1,163 @@
+// =====================================================================
+// TALLER 2 - PIPELINE MASTER (punto 5, 15%)
+// Rama: master
+// Objetivo: despliegue a produccion con aprobacion manual, versionado
+// semantico, Release Notes automaticas y rollback ante fallo.
+// =====================================================================
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 90, unit: 'MINUTES')
+    }
+
+    environment {
+        NAMESPACE    = 'master'
+        KIND_CLUSTER = 'circleguard'
+        MAJOR_MINOR  = '1.0'
+        VERSION      = "${MAJOR_MINOR}.${env.BUILD_NUMBER}"
+        GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
+        REPO = 'github.com/ingesoft5/circle-guard-publicA00405100.git'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'chmod +x gradlew; git fetch --tags --force || true'
+            }
+        }
+
+        stage('Build y pruebas unitarias') {
+            steps {
+                sh '''
+                    ./gradlew assemble --no-daemon
+                    ./gradlew --continue --no-daemon \
+                      :services:circleguard-form-service:test --tests "*SymptomMapperAdvancedTest" \
+                      :services:circleguard-auth-service:test --tests "*QrTokenServiceTest" \
+                      :services:circleguard-identity-service:test --tests "*IdentityVaultServiceHashTest" \
+                      :services:circleguard-notification-service:test --tests "*TemplateServiceContentTest" \
+                      :services:circleguard-dashboard-service:test --tests "*KAnonymityFilterTest"
+                '''
+            }
+            post { always { junit allowEmptyResults: true, testResults: '**/build/test-results/test/*.xml' } }
+        }
+
+        stage('Validacion de pruebas de sistema') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    // Gate: si stage no esta sano, no se promueve a master.
+                    sh '''
+                        kubectl -n stage get deploy
+                        kubectl -n stage wait --for=condition=available deploy --all --timeout=120s
+                    '''
+                }
+            }
+        }
+
+        stage('Aprobacion manual (Change Management)') {
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: "Desplegar la version ${VERSION} en produccion?",
+                          ok: 'Aprobar despliegue',
+                          submitter: 'admin'
+                }
+            }
+        }
+
+        stage('Imagenes con version semantica') {
+            steps {
+                script {
+                    ['auth', 'identity', 'form', 'promotion', 'notification', 'dashboard'].each { s ->
+                        sh "docker build -f services/circleguard-${s}-service/Dockerfile -t circleguard/${s}:${VERSION} ."
+                        sh "kind load docker-image circleguard/${s}:${VERSION} --name ${KIND_CLUSTER}"
+                    }
+                }
+            }
+        }
+
+        stage('Despliegue en master') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh """
+                        kubectl apply -n ${NAMESPACE} -f k8s/infra.yaml
+                        sed 's/__TAG__/${VERSION}/g' k8s/services.yaml | kubectl apply -n ${NAMESPACE} -f -
+                    """
+                    script {
+                        ['identity', 'auth', 'form', 'promotion', 'notification', 'dashboard'].each { s ->
+                            sh "kubectl -n ${NAMESPACE} rollout status deploy/${s}-service --timeout=400s"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Smoke tests post-despliegue') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        kubectl -n master get pods
+                        NOT_READY=$(kubectl -n master get pods --no-headers | grep -v Running | wc -l)
+                        [ "$NOT_READY" -eq 0 ]
+                    '''
+                }
+            }
+        }
+
+        stage('Tag y Release Notes') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'github-creds',
+                                                  usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
+                        RANGE=${PREV:+$PREV..}HEAD
+                        {
+                          echo "# Release v${VERSION}"
+                          echo "Fecha: $(date -u +%Y-%m-%d)"
+                          echo "Commit: $(git rev-parse --short HEAD)"
+                          echo
+                          echo "## Nuevas funcionalidades"
+                          git log $RANGE --pretty=format:"- %s (%an)" --grep="^feat" || true
+                          echo; echo
+                          echo "## Correcciones"
+                          git log $RANGE --pretty=format:"- %s (%an)" --grep="^fix" || true
+                          echo; echo
+                          echo "## Pruebas"
+                          git log $RANGE --pretty=format:"- %s (%an)" --grep="^test" || true
+                          echo; echo
+                          echo "## Otros cambios"
+                          git log $RANGE --pretty=format:"- %s (%an)" --invert-grep --grep="^feat" --grep="^fix" --grep="^test" || true
+                          echo; echo
+                          echo "## Despliegue"
+                          echo "Imagenes: circleguard/{auth,identity,form,promotion,notification,dashboard}:${VERSION}"
+                          echo "Namespace: master. Rollback: kubectl rollout undo deploy/<servicio> -n master"
+                        } > RELEASE_NOTES.md
+                        cat RELEASE_NOTES.md
+                        git config user.email "jenkins@circleguard.local"
+                        git config user.name "Jenkins"
+                        git tag -a "v${VERSION}" -m "Release ${VERSION}"
+                        git push https://${GH_USER}:${GH_TOKEN}@${REPO} "v${VERSION}"
+                    '''
+                }
+                archiveArtifacts artifacts: 'RELEASE_NOTES.md'
+            }
+        }
+    }
+
+    post {
+        failure {
+            withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                echo 'Fallo el despliegue: ejecutando rollback automatico.'
+                sh '''
+                    for s in identity auth form promotion notification dashboard; do
+                      kubectl -n master rollout undo deploy/${s}-service || true
+                    done
+                '''
+            }
+        }
+        success { echo "Version ${VERSION} desplegada en produccion." }
+    }
+}

@@ -1,28 +1,160 @@
+// =====================================================================
+// TALLER 2 - PIPELINE DEV (punto 2, 15%)
+// Rama: develop
+// Objetivo: construir la aplicacion, correr pruebas unitarias y de
+// integracion, y desplegar en el namespace dev de Kubernetes.
+// =====================================================================
 pipeline {
-  agent any
-  options { timestamps() }
-  environment { GRADLE_USER_HOME = "${WORKSPACE}/.gradle" }
-  stages {
-    stage('Build') {
-      steps { sh 'chmod +x gradlew && ./gradlew assemble -x test --no-daemon' }
+    agent any
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+        timeout(time: 60, unit: 'MINUTES')
     }
-    stage('Pruebas') {
-      steps {
-        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-          sh './gradlew test --continue --no-daemon'
+
+    environment {
+        TAG          = "dev-${env.BUILD_NUMBER}"
+        NAMESPACE    = 'dev'
+        KIND_CLUSTER = 'circleguard'
+        // Jenkins esta conectado a la red circle-guard-public_default, asi que
+        // alcanza la infraestructura por nombre de contenedor, no por localhost.
+        SPRING_DATASOURCE_URL = 'jdbc:postgresql://circleguard-postgres:5432/circleguard'
+        SPRING_KAFKA_BOOTSTRAP_SERVERS = 'circleguard-kafka:9092'
+        SPRING_NEO4J_URI = 'bolt://circleguard-neo4j:7687'
+        SPRING_DATA_REDIS_HOST = 'circleguard-redis'
+        GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'chmod +x gradlew'
+                script {
+                    env.GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+                echo "Construyendo ${env.GIT_SHA} como ${env.TAG}"
+            }
         }
-      }
-      post { always { junit allowEmptyResults: true, testResults: '**/build/test-results/test/*.xml' } }
-    }
-    stage('Imagenes Docker') {
-      steps {
-        script {
-          ['auth','identity','form','promotion','notification','dashboard'].each { s ->
-            sh "docker build -f services/circleguard-${s}-service/Dockerfile -t circleguard/${s}:${env.BUILD_NUMBER} ."
-          }
+
+        stage('Build') {
+            steps {
+                sh './gradlew assemble -x test --no-daemon --parallel'
+            }
         }
-        sh 'docker images | grep circleguard'
-      }
+
+        stage('Pruebas unitarias') {
+            steps {
+                // Las 5 clases de prueba unitaria nuevas del Taller 2.
+                sh '''
+                    ./gradlew --continue --no-daemon \
+                      :services:circleguard-form-service:test --tests "*SymptomMapperAdvancedTest" \
+                      :services:circleguard-auth-service:test --tests "*QrTokenServiceTest" \
+                      :services:circleguard-identity-service:test --tests "*IdentityVaultServiceHashTest" \
+                      :services:circleguard-notification-service:test --tests "*TemplateServiceContentTest" \
+                      :services:circleguard-dashboard-service:test --tests "*KAnonymityFilterTest"
+                '''
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: '**/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Pruebas de integracion') {
+            steps {
+                // Las clases *IT usan un broker Kafka embebido y MockRestServiceServer,
+                // asi que validan el contrato real entre servicios.
+                sh './gradlew --no-daemon :services:circleguard-form-service:test --tests "*IT"'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: '**/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Suite completa del repositorio') {
+            // Informativo: el repo trae pruebas preexistentes que dependen de
+            // infraestructura. No deben tumbar el pipeline de dev, pero si
+            // quedar registradas en el reporte.
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh './gradlew test --no-daemon'
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: '**/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Construccion de imagenes Docker') {
+            steps {
+                script {
+                    def servicios = [
+                        'auth', 'identity', 'form',
+                        'promotion', 'notification', 'dashboard'
+                    ]
+                    servicios.each { s ->
+                        sh "docker build -f services/circleguard-${s}-service/Dockerfile -t circleguard/${s}:${TAG} ."
+                    }
+                }
+                sh "docker images | grep circleguard"
+            }
+        }
+
+        stage('Carga de imagenes en kind') {
+            steps {
+                script {
+                    ['auth', 'identity', 'form', 'promotion', 'notification', 'dashboard'].each { s ->
+                        sh "kind load docker-image circleguard/${s}:${TAG} --name ${KIND_CLUSTER}"
+                    }
+                }
+            }
+        }
+
+        stage('Despliegue en dev') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh """
+                        kubectl apply -n ${NAMESPACE} -f k8s/infra.yaml
+                        sed 's/__TAG__/${TAG}/g' k8s/services.yaml | kubectl apply -n ${NAMESPACE} -f -
+                    """
+                }
+            }
+        }
+
+        stage('Verificacion del despliegue') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    script {
+                        ['identity', 'auth', 'form', 'promotion', 'notification', 'dashboard'].each { s ->
+                            sh "kubectl -n ${NAMESPACE} rollout status deploy/${s}-service --timeout=300s"
+                        }
+                    }
+                    sh "kubectl -n ${NAMESPACE} get pods -o wide"
+                }
+            }
+        }
     }
-  }
+
+    post {
+        success {
+            echo "DEV desplegado correctamente. Tag: ${TAG} (commit ${env.GIT_SHA})"
+        }
+        failure {
+            echo "Fallo el pipeline de DEV. Revise los reportes de pruebas del build ${env.BUILD_NUMBER}."
+        }
+        always {
+            archiveArtifacts artifacts: '**/build/reports/tests/**', allowEmptyArchive: true
+        }
+    }
 }

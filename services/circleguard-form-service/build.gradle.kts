@@ -16,4 +16,7 @@ dependencies {
     implementation("org.flywaydb:flyway-core")
     runtimeOnly("org.postgresql:postgresql")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+
+    // Taller 2: broker Kafka embebido para pruebas de integracion
+    testImplementation("org.springframework.kafka:spring-kafka-test")
 }

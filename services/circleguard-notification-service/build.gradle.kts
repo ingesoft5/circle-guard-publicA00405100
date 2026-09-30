@@ -20,4 +20,7 @@ dependencies {
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+
+    // Taller 2: broker Kafka embebido para pruebas de integracion
+    testImplementation("org.springframework.kafka:spring-kafka-test")
 }

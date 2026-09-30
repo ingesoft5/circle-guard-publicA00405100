@@ -1,0 +1,138 @@
+// =====================================================================
+// TALLER 2 - PIPELINE STAGE (punto 4, 15%)
+// Rama: stage
+// Objetivo: desplegar en el namespace stage y ejecutar pruebas E2E y de
+// rendimiento (Locust) contra los servicios desplegados en Kubernetes.
+// =====================================================================
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+        timeout(time: 90, unit: 'MINUTES')
+    }
+
+    environment {
+        TAG          = "stage-${env.BUILD_NUMBER}"
+        NAMESPACE    = 'stage'
+        KIND_CLUSTER = 'circleguard'
+        GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'chmod +x gradlew'
+            }
+        }
+
+        stage('Build y pruebas unitarias e integracion') {
+            steps {
+                sh './gradlew assemble -x test --no-daemon'
+                sh '''
+                    ./gradlew --continue --no-daemon \
+                      :services:circleguard-form-service:test --tests "*SymptomMapperAdvancedTest" \
+                      :services:circleguard-auth-service:test --tests "*QrTokenServiceTest" \
+                      :services:circleguard-identity-service:test --tests "*IdentityVaultServiceHashTest" \
+                      :services:circleguard-notification-service:test --tests "*TemplateServiceContentTest" \
+                      :services:circleguard-dashboard-service:test --tests "*KAnonymityFilterTest"
+                '''
+                sh './gradlew --no-daemon :services:circleguard-form-service:test --tests "*IT"'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          testResults: '**/build/test-results/test/*.xml'
+                }
+            }
+        }
+
+        stage('Imagenes Docker') {
+            steps {
+                script {
+                    ['auth', 'identity', 'form', 'promotion', 'notification', 'dashboard'].each { s ->
+                        sh "docker build -f services/circleguard-${s}-service/Dockerfile -t circleguard/${s}:${TAG} ."
+                        sh "kind load docker-image circleguard/${s}:${TAG} --name ${KIND_CLUSTER}"
+                    }
+                }
+            }
+        }
+
+        stage('Despliegue en stage') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh """
+                        kubectl apply -n ${NAMESPACE} -f k8s/infra.yaml
+                        sed 's/__TAG__/${TAG}/g' k8s/services.yaml | kubectl apply -n ${NAMESPACE} -f -
+                    """
+                    script {
+                        ['identity', 'auth', 'form', 'promotion', 'notification', 'dashboard'].each { s ->
+                            sh "kubectl -n ${NAMESPACE} rollout status deploy/${s}-service --timeout=400s"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Pruebas E2E') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+                    sh '''
+                        pip3 install --quiet --break-system-packages requests pytest pytest-html locust || true
+                        # Acceso a los servicios desplegados
+                        kubectl -n stage port-forward svc/auth-service 18180:8180 &
+                        kubectl -n stage port-forward svc/identity-service 18083:8083 &
+                        kubectl -n stage port-forward svc/form-service 18086:8086 &
+                        kubectl -n stage port-forward svc/promotion-service 18088:8088 &
+                        kubectl -n stage port-forward svc/dashboard-service 18084:8084 &
+                        sleep 10
+                        mkdir -p reports
+                        AUTH_URL=http://localhost:18180 IDENTITY_URL=http://localhost:18083 \
+                        FORM_URL=http://localhost:18086 PROMOTION_URL=http://localhost:18088 \
+                        DASHBOARD_URL=http://localhost:18084 \
+                        python3 -m pytest tests/e2e -v --junitxml=reports/e2e.xml --html=reports/e2e.html --self-contained-html
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'reports/e2e.xml'
+                }
+            }
+        }
+
+        stage('Pruebas de rendimiento (Locust)') {
+            steps {
+                sh '''
+                    mkdir -p reports/locust
+                    # Carga normal: 50 usuarios
+                    python3 -m locust -f tests/performance/locustfile.py --headless \
+                        -u 50 -r 5 -t 3m --host http://localhost:18180 \
+                        --csv reports/locust/carga --html reports/locust/carga.html
+                    # Estres: 200 usuarios
+                    python3 -m locust -f tests/performance/locustfile.py --headless \
+                        -u 200 -r 20 -t 3m --host http://localhost:18180 \
+                        --csv reports/locust/estres --html reports/locust/estres.html
+                '''
+            }
+            post {
+                always {
+                    publishHTML(target: [
+                        reportDir: 'reports/locust', reportFiles: 'carga.html,estres.html',
+                        reportName: 'Locust', keepAll: true, allowMissing: true
+                    ])
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'pkill -f "kubectl.*port-forward" || true'
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+        }
+    }
+}

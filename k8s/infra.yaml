@@ -1,0 +1,167 @@
+### Infraestructura compartida de CircleGuard
+### kubectl apply -n <namespace> -f k8s/infra.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: circleguard-config
+data:
+  POSTGRES_HOST: "postgres"
+  NEO4J_URI: "bolt://neo4j:7687"
+  KAFKA_BOOTSTRAP: "kafka:9092"
+  REDIS_HOST: "redis"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: circleguard-secrets
+type: Opaque
+stringData:
+  POSTGRES_USER: "admin"
+  POSTGRES_PASSWORD: "password"
+  NEO4J_AUTH: "neo4j/password"
+  JWT_SECRET: "cambiar-en-produccion-clave-de-al-menos-32-bytes"
+  QR_SECRET: "cambiar-en-produccion-clave-qr-de-32-bytes-min"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports: [{ containerPort: 5432 }]
+          env:
+            - name: POSTGRES_DB
+              value: circleguard
+            - name: POSTGRES_USER
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: POSTGRES_PASSWORD } }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "admin"] }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: neo4j }
+  template:
+    metadata:
+      labels: { app: neo4j }
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5.26
+          ports: [{ containerPort: 7474 }, { containerPort: 7687 }]
+          env:
+            - name: NEO4J_AUTH
+              valueFrom: { secretKeyRef: { name: circleguard-secrets, key: NEO4J_AUTH } }
+            - name: NEO4J_PLUGINS
+              value: '["apoc"]'
+          readinessProbe:
+            tcpSocket: { port: 7687 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+spec:
+  selector: { app: neo4j }
+  ports:
+    - { name: http, port: 7474, targetPort: 7474 }
+    - { name: bolt, port: 7687, targetPort: 7687 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            tcpSocket: { port: 6379 }
+            initialDelaySeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+### Kafka en modo KRaft: sin Zookeeper, mas liviano para el cluster local
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kafka }
+  template:
+    metadata:
+      labels: { app: kafka }
+    spec:
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.6.0
+          ports: [{ containerPort: 9092 }]
+          env:
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093" }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "PLAINTEXT" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: CLUSTER_ID, value: "MkU3OEVBNTcwNTJENDM2Qk" }
+          readinessProbe:
+            tcpSocket: { port: 9092 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  selector: { app: kafka }
+  ports: [{ port: 9092, targetPort: 9092 }]

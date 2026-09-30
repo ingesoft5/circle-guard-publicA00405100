@@ -29,4 +29,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:1.19.3")
     testImplementation("org.testcontainers:postgresql:1.19.3")
     testImplementation("org.testcontainers:neo4j:1.19.3")
+
+    // Taller 2: broker Kafka embebido para pruebas de integracion
+    testImplementation("org.springframework.kafka:spring-kafka-test")
 }
